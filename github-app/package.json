@@ -1,0 +1,31 @@
+{
+  "name": "wsdc-reviewer",
+  "version": "1.0.0",
+  "private": true,
+  "description": "AI Security Reviewer",
+  "author": "Rishabh Raj Singh <rishabh@example.com>",
+  "license": "ISC",
+  "homepage": "https://github.com//WSDC",
+  "keywords": [
+    "probot",
+    "github",
+    "probot-app"
+  ],
+  "scripts": {
+    "start": "probot run ./index.js",
+    "test": "node --test"
+  },
+  "dependencies": {
+    "bull": "4.16.5",
+    "dotenv": "17.3.1",
+    "probot": "13.0.1"
+  },
+  "devDependencies": {
+    "nock": "14.0.0-beta.5",
+    "smee-client": "2.0.0"
+  },
+  "engines": {
+    "node": ">= 18"
+  },
+  "type": "module"
+}
