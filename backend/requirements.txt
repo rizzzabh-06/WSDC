@@ -10,6 +10,13 @@ python-dotenv==1.0.1
 pydantic==2.7.4
 pydantic-settings==2.3.4
 requests==2.32.3
-# Security additions
+# Security
 slowapi==0.1.9
 structlog==24.4.0
+# Migrations
+alembic==1.18.4
+# External APIs / AI
+httpx==0.28.1
+PyJWT==2.11.0
+cryptography==46.0.5
+openai==1.50.2

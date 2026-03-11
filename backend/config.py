@@ -6,8 +6,9 @@ OWASP A02 (Cryptographic Failures): Enforces TLS on database and Redis connectio
 """
 
 import os
+from typing import Optional
 from pydantic_settings import BaseSettings
-from pydantic import field_validator
+from pydantic import field_validator, SecretStr
 
 
 class Settings(BaseSettings):
@@ -22,10 +23,14 @@ class Settings(BaseSettings):
     # --- Redis (Upstash) ---
     REDIS_URL: str
 
-    # --- GitHub App ---
-    APP_ID: str = ""
-    PRIVATE_KEY: str = ""
-    WEBHOOK_SECRET: str = ""
+    # GitHub App config
+    APP_ID: Optional[str] = None
+    PRIVATE_KEY: Optional[str] = None
+    WEBHOOK_SECRET: Optional[str] = None
+
+    # AI & Analysis config
+    OPENAI_API_KEY: Optional[SecretStr] = None
+    SLITHER_CMD: str = "slither"
 
     # --- WSDC API Key (protects internal endpoints) ---
     WSDC_API_KEY: str = ""
