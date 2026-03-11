@@ -40,7 +40,10 @@ You are analyzing a static analysis finding (from Slither) on a newly submitted 
 Your goal is to explain this finding in the context of the code changes, providing:
 1. A clear, dense 1-line summary.
 2. An exploit scenario contextualized to the provided code snippet.
-3. Concrete fix recommendations (code if possible) and tradeoffs.
+3. Concrete fix recommendations and tradeoffs. If the fix requires modifying the code, you MUST format the code replacement using a GitHub Markdown Suggestion block exactly like this:
+```suggestion
+// your corrected lines of code
+```
 4. The relevant OWASP Smart Contract Top 10 category.
 
 Return ONLY a valid JSON object matching this schema:
@@ -54,13 +57,13 @@ Return ONLY a valid JSON object matching this schema:
 Be educational, precise, and avoid generic boilerplate.
 """
 
-
 # ── Service Actions ──
 
 async def generate_tiered_explanation(
-    finding: FindingDetail, 
+    finding: dict, 
     file_diff: FileDiff,
-    repo_name: str
+    repo_name: str,
+    protocol_context: str = ""
 ) -> Optional[Dict[str, Any]]:
     """
     Generate a 3-tier explanation using Gemini.
@@ -74,7 +77,7 @@ async def generate_tiered_explanation(
     # Find the relevant code snippet
     code_context = ""
     for hunk in file_diff.hunks:
-        if hunk.new_start - 2 <= finding.line_number <= hunk.new_start + hunk.new_count + 2:
+        if hunk.new_start - 2 <= finding.get("line_number") <= hunk.new_start + hunk.new_count + 2:
             code_context = "\n".join(hunk.lines)
             break
             
@@ -83,10 +86,14 @@ async def generate_tiered_explanation(
 
     prompt = f"""
 Repository: {repo_name}
-Vulnerability Category: {finding.category}
-Severity: {finding.severity}
-File: {file_diff.file_path}:{finding.line_number}
-Slither Generic Description: {finding.description}
+Protocol Context: {protocol_context}
+
+Vulnerability Category: {finding.get('category')}
+Severity: {finding.get('severity')}
+File: {file_diff.file_path}:{finding.get('line_number')}
+Slither Generic Description: {finding.get('description')}
+
+Regression Warning: {finding.get('regression_note')}
 
 ### Recent Code Changes (Git Diff Hunk)
 ```diff
@@ -129,7 +136,7 @@ Please generate the explanation matching the required JSON schema.
         return None
 
 
-def format_inline_comment(finding: FindingDetail, ai_explanation: Optional[Dict[str, Any]]) -> str:
+def format_inline_comment(finding: dict, ai_explanation: Optional[Dict[str, Any]]) -> str:
     """
     Format the multi-level inline PR comment for GitHub.
     """
@@ -140,13 +147,16 @@ def format_inline_comment(finding: FindingDetail, ai_explanation: Optional[Dict[
         "low": "🔵",
         "informational": "⚪",
     }
-    badge = severity_badges.get(finding.severity, "⚪")
+    badge = severity_badges.get(finding.get("severity"), "⚪")
+    
+    regression_banner = f"\n> [!CAUTION]\n> **{finding.get('regression_note')}**\n\n" if finding.get("is_regression") else ""
     
     if not ai_explanation:
         # Fallback if AI fails or is disabled
         return (
-            f"### {badge} {finding.title}\n\n"
-            f"**Generic description:** {finding.description}\n\n"
+            f"### {badge} {finding.get('title')}\n\n"
+            f"{regression_banner}"
+            f"**Generic description:** {finding.get('description')}\n\n"
             "*AI explanation unavailable or disabled.*"
         )
         
@@ -155,9 +165,9 @@ def format_inline_comment(finding: FindingDetail, ai_explanation: Optional[Dict[
     fix = ai_explanation["fix"]
     owasp = ", ".join(ai_explanation["owasp_mapping"])
     
-    # 3-level collapsible structure (PRD 4.5)
-    return f"""### {badge} {finding.title}
-**{summary}**
+    # 3-level collapsible structure (PRD 4.5) + Interactive fixes
+    return f"""### {badge} {finding.get('title')}
+{regression_banner}**{summary}**
 
 <details open>
 <summary><b>Context & Exploit Scenario</b></summary>

@@ -18,6 +18,11 @@ from dotenv import load_dotenv
 from config import get_settings
 from security import validate_repo_id, validate_git_sha, sanitize_log_message
 from services.slither_service import FindingDetail
+from services.protocol_service import extract_architecture, parse_wsdc_config, upsert_protocol_model
+from services.history_service import update_security_history, detect_regressions
+from services.metrics_service import calculate_attack_surface, get_baseline_attack_surface, build_delta_table
+from database import async_session_maker
+from models import Repository, PullRequest, Finding
 
 load_dotenv()
 
@@ -89,6 +94,38 @@ def _step_clone_and_diff(repo_full_name: str, head_sha: str, base_sha: str, toke
         ctx.__exit__(None, None, None)
         raise
 
+async def _async_db_setup(owner: str, repo: str, installation_id: int, pr_number: int, head_sha: str, base_sha: str):
+    from sqlalchemy.future import select
+    async with async_session_maker() as session:
+        # Get or create repository
+        stmt = select(Repository).where(Repository.owner == owner, Repository.name == repo)
+        repository = (await session.execute(stmt)).scalars().first()
+        if not repository:
+            repository = Repository(owner=owner, name=repo, github_id=0, installation_id=installation_id)
+            session.add(repository)
+            await session.flush()
+            
+        # Get or create PR
+        stmt = select(PullRequest).where(PullRequest.repo_id == repository.id, PullRequest.pr_number == pr_number)
+        pr = (await session.execute(stmt)).scalars().first()
+        if not pr:
+            pr = PullRequest(repo_id=repository.id, pr_number=pr_number, head_sha=head_sha, base_sha=base_sha)
+            session.add(pr)
+        else:
+            pr.head_sha = head_sha
+            pr.status = "pending"
+            
+        await session.commit()
+        return repository.id, pr.id
+
+async def _step_protocol_model(repo_uuid, repo_dir):
+    architecture = extract_architecture(repo_dir)
+    config = parse_wsdc_config(repo_dir)
+    async with async_session_maker() as session:
+        return await upsert_protocol_model(session, repo_uuid, architecture, config)
+
+def _step_attack_surface(repo_dir) -> dict:
+    return calculate_attack_surface(repo_dir)
 
 def _step_slither_analysis(repo_dir: str, file_diffs: list) -> list[FindingDetail]:
     from services.slither_service import run_slither_on_repo, parse_slither_json, filter_findings_by_diff
@@ -104,20 +141,19 @@ def _step_slither_analysis(repo_dir: str, file_diffs: list) -> list[FindingDetai
     return filtered
 
 
-async def _step_ai_enhancement(findings: list[FindingDetail], file_diffs: list, repo_name: str) -> list[dict]:
+async def _step_ai_enhancement(findings: list[dict], file_diffs: list, repo_name: str, protocol_context: str) -> list[dict]:
     """Enhance findings concurrently using OpenAI."""
     from services.ai_service import generate_tiered_explanation, format_inline_comment
     
     diff_map = {fd.file_path: fd for fd in file_diffs}
     tasks = []
     
-    # Fire off all LLM requests concurrently
     for f in findings:
-        fd = diff_map.get(f.file_path)
+        fd = diff_map.get(f.get("file_path"))
         if fd:
-            tasks.append(generate_tiered_explanation(f, fd, repo_name))
+            # We must pass protocol_context now if we modify the ai_service
+            tasks.append(generate_tiered_explanation(f, fd, repo_name, protocol_context=protocol_context))
         else:
-            # Fallback if somehow there's no diff context
             tasks.append(asyncio.sleep(0, result=None))
             
     results = await asyncio.gather(*tasks, return_exceptions=True)
@@ -125,20 +161,24 @@ async def _step_ai_enhancement(findings: list[FindingDetail], file_diffs: list, 
     enhanced = []
     for f, ai_res in zip(findings, results):
         if isinstance(ai_res, Exception):
-            logger.error("AI generation failed for %s: %s", f.title, ai_res)
+            logger.error("AI generation failed for %s: %s", f.get("title"), ai_res)
             ai_res = None
             
         comment_body = format_inline_comment(f, ai_res)
         
+        # Merge AI data into dict format (we converted FindingDetail to dict earlier)
+        # Note: findings parameter is now dicts here if we converted them beforehand or later
         enhanced.append({
-            "category": f.category,
-            "severity": f.severity,
-            "file_path": f.file_path,
-            "line_number": f.line_number,
-            "title": f.title,
-            "description": f.description,
+            "category": f.get("category"),
+            "severity": f.get("severity"),
+            "file_path": f.get("file_path"),
+            "line_number": f.get("line_number"),
+            "title": f.get("title"),
+            "description": f.get("description"),
             "comment_body": comment_body,     # Stored for GitHub posting
-            "ai_data": ai_res                 # Stored for DB persistence
+            "ai_data": ai_res,                # Stored for DB persistence
+            "is_regression": f.get("is_regression", False),
+            "regression_note": f.get("regression_note", "")
         })
         
     return enhanced
@@ -152,6 +192,7 @@ async def _step_post_comments(
     head_sha: str,
     changed_files: list,
     enhanced_findings: list[dict],
+    attack_surface_delta_table: str,
 ):
     from services.github_client import GitHubClient, format_summary_comment
 
@@ -192,6 +233,7 @@ async def _step_post_comments(
         sol_files_changed=len(changed_files),
         findings_count=len(enhanced_findings),
         findings_by_severity=severity_counts,
+        attack_surface_delta_table=attack_surface_delta_table,
     )
 
     await client.post_pr_comment(
@@ -205,12 +247,39 @@ async def _step_post_comments(
     return posted_comments
 
 
-async def _step_persist_results(repo_id: str, pr_number: int, head_sha: str, base_sha: str, findings: list[dict]):
-    """Save PR and findings to PostgreSQL."""
-    # Note: Full asyncpg persistence will be added here.
-    # We are deferring the full sqlalchemy session logic to verify the pipeline core first, 
-    # but the stubs and models are ready.
-    logger.info("Persisting %d findings to database for PR #%d", len(findings), pr_number)
+async def _step_persist_results(repo_uuid, pr_uuid, enhanced_findings: list[dict], current_metrics: dict):
+    """Save findings and history to PostgreSQL."""
+    logger.info("Persisting %d findings to database for PR %s", len(enhanced_findings), pr_uuid)
+    async with async_session_maker() as session:
+        for ef in enhanced_findings:
+            ai_data = ef.get("ai_data", {}) or {}
+            f = Finding(
+                pr_id=pr_uuid,
+                category=ef["category"],
+                severity=ef["severity"],
+                file_path=ef["file_path"],
+                line_number=ef["line_number"],
+                title=ef["title"],
+                description=ef["description"],
+                exploit_scenario=ai_data.get("context", ""),
+                fix_suggestions=[ai_data.get("fix", "")] if ai_data.get("fix") else [],
+                owasp_mapping=ai_data.get("owasp_mapping", []),
+                github_comment_id=ef.get("github_comment_id"),
+                status="open"
+            )
+            session.add(f)
+            
+        # Update history
+        await update_security_history(session, repo_uuid, pr_uuid, enhanced_findings)
+        
+        # Mark PR as reviewed and save metrics
+        from sqlalchemy.future import select
+        pr = (await session.execute(select(PullRequest).where(PullRequest.id == pr_uuid))).scalars().first()
+        if pr:
+            pr.status = "reviewed"
+            pr.attack_surface_delta = {"current_metrics": current_metrics}
+            
+        await session.commit()
 
 
 # ── Main Task ──
@@ -233,6 +302,9 @@ def process_pr_event(
     logger.info("Review pipeline started for %s PR #%d", repo_id, pr_number)
 
     try:
+        # DB Setup
+        repo_uuid, pr_uuid = _run_async(_async_db_setup(owner, repo, installation_id, pr_number, head_sha, base_sha))
+        
         # Clone (Context holds dir open for Slither)
         if settings.APP_ID and settings.PRIVATE_KEY and installation_id:
             from services.github_client import GitHubClient
@@ -248,15 +320,43 @@ def process_pr_event(
                 logger.info("No Solidity changes — pipeline complete")
                 return {"status": "success", "findings": 0}
 
+            # Protocol Model Gen
+            p_model = _run_async(_step_protocol_model(repo_uuid, repo_dir))
+            
+            # Formulate RAG context
+            protocol_context = ""
+            if p_model and p_model.contracts:
+                roles = set()
+                for c in p_model.contracts:
+                    roles.update(c.get("roles", []))
+                protocol_context = f"Project uses roles: {', '.join(roles)}."
+
             # Analysis
-            raw_findings = _step_slither_analysis(repo_dir, file_diffs)
+            raw_findings_objs = _step_slither_analysis(repo_dir, file_diffs)
+            
+            # Attack Surface
+            current_metrics = _step_attack_surface(repo_dir)
+            async def _fetch_baseline():
+                async with async_session_maker() as session:
+                    return await get_baseline_attack_surface(session, repo_uuid, base_sha)
+            baseline = _run_async(_fetch_baseline())
+            delta_table = build_delta_table(current_metrics, baseline)
+            
+            # Convert FindingDetail objects to dicts for simpler uniform mutation
+            raw_findings = [vars(f) for f in raw_findings_objs]
             
         finally:
             # Clean up clone immediately after analysis
             ctx.__exit__(None, None, None)
 
+        # Regressions (mutate raw_findings)
+        async def _check_regressions():
+            async with async_session_maker() as session:
+                return await detect_regressions(session, repo_uuid, raw_findings)
+        raw_findings = _run_async(_check_regressions())
+
         # AI Enhancement
-        enhanced_findings = _run_async(_step_ai_enhancement(raw_findings, file_diffs, repo_id))
+        enhanced_findings = _run_async(_step_ai_enhancement(raw_findings, file_diffs, repo_id, protocol_context))
         
         # Post Comments
         _run_async(_step_post_comments(
@@ -266,11 +366,12 @@ def process_pr_event(
             pr_number=pr_number,
             head_sha=head_sha,
             changed_files=changed_files,
-            enhanced_findings=enhanced_findings
+            enhanced_findings=enhanced_findings,
+            attack_surface_delta_table=delta_table
         ))
         
         # Persist
-        _run_async(_step_persist_results(repo_id, pr_number, head_sha, base_sha, enhanced_findings))
+        _run_async(_step_persist_results(repo_uuid, pr_uuid, enhanced_findings, current_metrics))
 
     except Exception as e:
         logger.error("Pipeline failed: %s", sanitize_log_message(str(e)))
@@ -282,3 +383,31 @@ def process_pr_event(
         "pr_number": pr_number,
         "findings_count": len(enhanced_findings)
     }
+
+
+@app.task(name="wsdc.process_bot_command", bind=True, max_retries=2)
+def process_bot_command(
+    self,
+    repo_id: str,
+    pr_number: int,
+    comment_id: int,
+    command: str,
+    installation_id: int = 0,
+):
+    """Handles bot commands like /wsdc accept-risk and /wsdc explain"""
+    logger.info("Processing bot command: /wsdc %s on %s PR #%d", command, repo_id, pr_number)
+    
+    try:
+        if command.startswith("accept-risk"):
+            logger.info("Action: Accepting risk for finding associated with comment %d", comment_id)
+            # In a full implementation, this updates the Finding status to 'accepted_risk' in DB
+            
+        elif command.startswith("explain"):
+            logger.info("Action: Generating deeper explanation for finding...")
+            # Here we would fetch the Finding and pass it to a deeper LLM context chain
+            
+    except Exception as e:
+        logger.error("Bot command processing failed: %s", sanitize_log_message(str(e)))
+        raise self.retry(exc=e, countdown=10)
+        
+    return {"status": "success", "command": command}

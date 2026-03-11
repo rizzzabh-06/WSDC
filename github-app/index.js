@@ -133,4 +133,40 @@ module.exports = (app) => {
       return context.octokit.issues.createComment(issueComment);
     }
   );
+
+  app.on("issue_comment.created", async (context) => {
+    if (context.isBot) return;
+
+    const body = context.payload.comment.body.trim();
+    if (!body.startsWith("/wsdc ")) return;
+
+    const repo = context.payload.repository;
+    const command = body.replace("/wsdc ", "").trim();
+    const isPR = !!context.payload.issue.pull_request;
+
+    // Commands only apply to PRs where reviews happen
+    if (!isPR) return;
+
+    app.log.info("Received bot command: /wsdc %s on %s#%d", command, repo.full_name, context.payload.issue.number);
+
+    const jobData = {
+      repo_id: repo.full_name,
+      pr_number: context.payload.issue.number,
+      comment_id: context.payload.comment.id,
+      command: command,
+      installation_id: context.payload.installation ? context.payload.installation.id : 0,
+    };
+
+    try {
+      await prQueue.add("wsdc.process_bot_command", jobData, {
+        attempts: 2,
+        removeOnComplete: 100,
+        removeOnFail: 50,
+      });
+      app.log.info("Enqueued bot command worker job");
+    } catch (err) {
+      app.log.error("Failed to enqueue bot command: %s", err.message);
+    }
+  });
+
 };

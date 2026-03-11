@@ -225,6 +225,7 @@ def format_summary_comment(
     sol_files_changed: int,
     findings_count: int,
     findings_by_severity: dict[str, int],
+    attack_surface_delta_table: str = "",
 ) -> str:
     """
     Format the PR summary comment posted after a review.
@@ -242,6 +243,7 @@ def format_summary_comment(
         return (
             "## 🛡️ WSDC Security Review Complete\n\n"
             f"**{sol_files_changed} Solidity file(s)** analyzed — **no security issues found**.\n\n"
+            f"{attack_surface_delta_table}\n"
             "✅ All clear! This PR looks safe from a security perspective.\n\n"
             "---\n"
             "*Powered by [WSDC](https://github.com/wsdc) — Web3 Security Development Co-Pilot*"
@@ -262,6 +264,7 @@ def format_summary_comment(
         f"**{sol_files_changed} Solidity file(s)** analyzed — "
         f"**{findings_count} issue(s)** found.\n\n"
         f"{severity_table}\n\n"
+        f"{attack_surface_delta_table}\n"
         "<details>\n<summary>📋 What to do next</summary>\n\n"
         "- Review each inline comment below\n"
         "- Fix critical/high issues before merging\n"
