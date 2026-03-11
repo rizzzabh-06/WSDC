@@ -1,0 +1,37 @@
+# ─── Python ───
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+*.egg
+.venv/
+venv/
+
+# ─── Environment ───
+.env
+.env.local
+.env.*.local
+
+# ─── Node ───
+node_modules/
+npm-debug.log*
+
+# ─── IDE ───
+.vscode/
+.idea/
+*.swp
+*.swo
+.DS_Store
+
+# ─── Testing ───
+.coverage
+htmlcov/
+.pytest_cache/
+
+# ─── Temp ───
+tmp/
+*.tmp
+test_db.py
+test_pr.py
+test_gemini.py

@@ -10,7 +10,8 @@ import json
 import logging
 from typing import Optional, Dict, Any
 
-from openai import AsyncOpenAI
+from google import genai
+from google.genai import types
 from pydantic import BaseModel, Field
 
 from config import get_settings
@@ -62,12 +63,12 @@ async def generate_tiered_explanation(
     repo_name: str
 ) -> Optional[Dict[str, Any]]:
     """
-    Generate a 3-tier explanation using OpenAI.
+    Generate a 3-tier explanation using Gemini.
     Extracts the relevant hunk from the FileDiff to append to the prompt.
     """
     settings = get_settings()
-    if not settings.OPENAI_API_KEY:
-        logger.warning("OPENAI_API_KEY not set — falling back to basic explanation")
+    if not settings.GEMINI_API_KEY:
+        logger.warning("GEMINI_API_KEY not set — falling back to basic explanation")
         return None
 
     # Find the relevant code snippet
@@ -92,26 +93,28 @@ Slither Generic Description: {finding.description}
 {code_context}
 ```
 
-Generate the tiered explanation JSON.
+Please generate the explanation matching the required JSON schema.
 """
 
-    client = AsyncOpenAI(api_key=settings.OPENAI_API_KEY.get_secret_value())
+    # Note: Using sync client wrapped in async here as google-genai async support relies on asyncio
+    # For a high throughput production app, you might want to fully manage the async client loop.
+    client = genai.Client(api_key=settings.GEMINI_API_KEY.get_secret_value())
     
     try:
         logger.info("Generating AI explanation for %s on %s...", finding.category, file_diff.file_path)
         
-        response = await client.chat.completions.create(
-            model="gpt-4-turbo-preview",  # standardizing on modern fast gpt-4
-            messages=[
-                {"role": "system", "content": SYSTEM_PROMPT},
-                {"role": "user", "content": prompt}
-            ],
-            response_format={"type": "json_object"},
-            temperature=0.2,
-            max_tokens=800,
+        response = await client.aio.models.generate_content(
+            model='gemini-2.5-flash',
+            contents=[prompt],
+            config=types.GenerateContentConfig(
+                system_instruction=SYSTEM_PROMPT,
+                response_mime_type="application/json",
+                response_schema=TieredExplanation,
+                temperature=0.2,
+            ),
         )
         
-        content = response.choices[0].message.content
+        content = response.text
         if not content:
             return None
             

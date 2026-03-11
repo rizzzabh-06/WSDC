@@ -41,7 +41,8 @@ app.conf.update(
     result_serializer="json",
     timezone="UTC",
     enable_utc=True,
-    broker_use_ssl=settings.REDIS_URL.startswith("rediss://"),
+    broker_use_ssl={"ssl_cert_reqs": "none"} if settings.REDIS_URL.startswith("rediss://") else False,
+    redis_backend_use_ssl={"ssl_cert_reqs": "none"} if settings.REDIS_URL.startswith("rediss://") else False,
     task_soft_time_limit=300,  # 5 minutes (Slither + LLM can take time)
     task_time_limit=360,
     task_max_retries=3,

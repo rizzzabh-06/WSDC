@@ -29,7 +29,7 @@ class Settings(BaseSettings):
     WEBHOOK_SECRET: Optional[str] = None
 
     # AI & Analysis config
-    OPENAI_API_KEY: Optional[SecretStr] = None
+    GEMINI_API_KEY: Optional[SecretStr] = None
     SLITHER_CMD: str = "slither"
 
     # --- WSDC API Key (protects internal endpoints) ---
