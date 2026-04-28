@@ -60,10 +60,10 @@ export default function Navbar() {
           {/* CTA */}
           <div className="hidden md:flex items-center gap-3">
             <a
-              href="#demo"
+              href="#waitlist"
               className="px-4 py-2 text-sm font-semibold rounded-lg bg-accent hover:bg-accent-glow text-white transition-all duration-200 hover:shadow-lg hover:shadow-accent/25"
             >
-              Get Started
+              Join Waitlist
             </a>
           </div>
 
@@ -104,11 +104,11 @@ export default function Navbar() {
               </a>
             ))}
             <a
-              href="#demo"
+              href="#waitlist"
               onClick={() => setMobileOpen(false)}
               className="block mt-2 px-3 py-2.5 text-sm font-semibold text-center rounded-lg bg-accent text-white"
             >
-              Get Started
+              Join Waitlist
             </a>
           </div>
         )}

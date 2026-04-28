@@ -6,6 +6,7 @@ import SolutionSection from "@/components/SolutionSection";
 import ComparisonSection from "@/components/ComparisonSection";
 import ArchitectureSection from "@/components/ArchitectureSection";
 import FeaturesSection from "@/components/FeaturesSection";
+import WaitlistSection from "@/components/WaitlistSection";
 import Footer from "@/components/Footer";
 
 export default function Home() {
@@ -20,6 +21,7 @@ export default function Home() {
         <ComparisonSection />
         <ArchitectureSection />
         <FeaturesSection />
+        <WaitlistSection />
       </main>
       <Footer />
     </>
