@@ -1,0 +1,65 @@
+{
+  "name": "wsdc-vscode",
+  "displayName": "wsdc-vscode",
+  "description": "WSDC VS Code Extension for Web3 Security",
+  "version": "0.0.1",
+  "type": "module",
+  "engines": {
+    "vscode": "^1.110.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "activationEvents": [
+    "onLanguage:solidity"
+  ],
+  "main": "./out/extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "wsdc.analyze",
+        "title": "WSDC: Analyze Solidity with Slither"
+      }
+    ],
+    "configuration": {
+      "title": "WSDC Security",
+      "properties": {
+        "wsdc.geminiApiKey": {
+          "type": "string",
+          "default": "",
+          "description": "API Key for Google Gemini (needed for AI Explanations & Code Fixes)"
+        },
+        "wsdc.slitherPath": {
+          "type": "string",
+          "default": "slither",
+          "description": "Path to the Slither executable (e.g. /opt/homebrew/bin/slither)"
+        }
+      }
+    }
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run compile",
+    "compile": "tsc -p ./ --skipLibCheck",
+    "watch": "tsc -watch -p ./ --skipLibCheck",
+    "pretest": "npm run compile && npm run lint",
+    "lint": "eslint src",
+    "test": "vscode-test"
+  },
+  "devDependencies": {
+    "@modelcontextprotocol/sdk": "^1.27.1",
+    "@types/mocha": "^10.0.10",
+    "@types/node": "^22.19.15",
+    "@types/vscode": "^1.110.0",
+    "@vscode/test-cli": "^0.0.12",
+    "@vscode/test-electron": "^2.5.2",
+    "eslint": "^9.39.2",
+    "typescript": "^5.9.3",
+    "typescript-eslint": "^8.54.0"
+  },
+  "dependencies": {
+    "@google/genai": "^1.44.0",
+    "@types/dom-mediacapture-record": "^1.0.22",
+    "@types/dom-webcodecs": "^0.1.18",
+    "dotenv": "^17.3.1"
+  }
+}
